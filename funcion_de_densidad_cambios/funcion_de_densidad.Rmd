@@ -1,0 +1,166 @@
+---
+title: "Función de densidad"
+uthor: Alexander Quevedo
+date: '2021-06-13'
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  github_document:
+    toc: yes
+    dev: jpeg
+  html_notebook:
+    toc: yes
+    toc_float: yes
+    theme: cerulean
+    highlight: tango
+email: aquevedo.ute@conafor.gob.mx
+---
+
+
+
+
+## Explorar separabilidad
+
+
+```{r message=TRUE, warning=FALSE}
+if (!require("sf")) install.packages("sf")
+if (!require("tidyverse")) install.packages("tidyverse")
+if (!require("GGally")) install.packages("GGally")
+if (!require("np")) install.packages("np")
+source("funiciones_sospechos.R")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+e_zona <- st_read("Datos/poligonos_14_16.shp") %>% st_drop_geometry()
+```
+
+```{r}
+names(e_zona)
+# tcd tree cover density  * 2015 en los casos posteriores  
+# mdmx_t1 etiqueta de cobertura t1 
+# mdmx_t2  t2
+# ipcc_dyna_ etiqueta 1 a etiqueta 2
+# prob_cmb_c prob. de cambio de t1  a t2 basado en la vecindad 
+# maf_5 coef. PCA  
+# met_t estadicas zonales de bandas 
+#t1 = 2014 
+#t2 = 2016
+# Val_Cambio = C CAMBIO, p 
+```
+```{r message=TRUE, fig.height=15, fig.width=15, message=FALSE, warning=FALSE}
+my_colors <- c("P" = "#00b159","C" = "#d11141")
+e_zona %>% 
+  select(starts_with("met_") ,Val_Cambio) %>%  
+    ggpairs(., aes(colour = Val_Cambio),
+        upper = list(continuous = wrap("points", alpha = 0.3)),
+        diag = list(discrete="barDiag", continuous = wrap("densityDiag", alpha=0.5 )),
+        lower = list(continuous = wrap("smooth", alpha = 0.3, size=0.1)),
+        legend = c(1,1))+
+        scale_color_manual(values = my_colors)+
+        scale_fill_manual(values = my_colors)
+  
+```
+
+
+```{r echo=TRUE, fig.height=15, fig.width=15, message=FALSE, warning=FALSE}
+e_zona %>% 
+    filter(SAMOF16 == 12)%>% 
+  select(starts_with("met_") ,Val_Cambio) %>% 
+    ggpairs(., aes(colour = Val_Cambio),
+        upper = list(continuous = wrap("points", alpha = 0.3)),
+        diag = list(discrete="barDiag", continuous = wrap("densityDiag", alpha=0.5 )),
+        lower = list(continuous = wrap("smooth", alpha = 0.3, size=0.1)),
+        legend = c(1,1))+
+        scale_color_manual(values = my_colors)+
+        scale_fill_manual(values = my_colors)
+```
+
+
+## Función de densidad - 1 paso
+
+### Todas las categorias 
+
+```{r}
+variables <- names(e_zona)[startsWith(names(e_zona),"met_")]
+```
+
+```{r}
+formula <- formula(paste("~", paste(variables, collapse = "+")))
+bw <- np::npudensbw(formula, data = e_zona, bwmethod="normal-reference")
+f <- npudens(bw)
+df_sospechosos  <- cbind(e_zona, f$dens)
+df_sospechosos$sospechoso <- with(e_zona, ifelse(f$dens <= quantile(f$dens, 0.10), 1, 0))
+```
+
+```{r}
+ct_t <- table(df_sospechosos$Val_Cambio, df_sospechosos$sospechoso)
+ct_t
+prop.table(ct_t) # cell percentages
+prop.table(ct_t, 1) # row percentages
+prop.table(ct_t, 2) # column percentages
+```
+```{r}
+ct <- table(df_sospechosos$Val_Cambio,df_sospechosos$sospechoso)
+ct
+prop.table(ct) # cell percentages
+prop.table(ct, 1) # row percentages
+prop.table(ct, 2) # column percentages
+```
+
+### para una categoria 
+
+
+```{r}
+sb  <- e_zona %>% 
+    filter(SAMOF16 == 12)
+bw_sb <- np::npudensbw(formula, data = sb, bwmethod="normal-reference")
+f_sb <- npudens(bw_sb)
+df_sospechosos_sb  <- cbind(sb, f_sb$dens)
+df_sospechosos_sb$sospechoso <- with(sb, ifelse(f_sb$dens <= quantile(f_sb$dens, 0.10), 1, 0))
+
+ct_sd <-  table(df_sospechosos_sb$Val_Cambio,df_sospechosos_sb$sospechoso)
+ct_sd
+prop.table(ct_sd, 1)
+prop.table(ct_sd, 2)
+```
+
+```{r}
+# densidad_1paso <-
+#   function(df_cat,
+#            poutlayer = 0.10,
+#            var =  c("navevar1", "navevar2")) {
+#     formula <- formula(paste("~", paste(var, collapse = "+")))
+#     bw <- np::npudensbw(formula, data = df_cat[,var], bwmethod="normal-reference")
+#     #f <- npudens(tdat = df_cat[, var])
+#     f <- np::npudens(bw)
+#     df_cat$fdens <- f$dens
+#     df_cat$sospechoso <- with(df_cat, ifelse(df_cat$fdens <= quantile(df_cat$fdens, poutlayer), 1, 0))
+#     return(df_cat)
+#   }
+```
+
+```{r}
+var_t1 <-  names(sb)[startsWith(names(sb),"met_t1")]
+sb_t1 <- densidad_1paso(sb ,poutlayer = 0.10, var = var_t1) 
+ct_sd_1 <-  table(sb_t1$Val_Cambio,sb_t1$sospechoso)
+ct_sd_1
+prop.table(ct_sd_1, 1)
+prop.table(ct_sd_1, 2)
+```
+
+
+## Función de densidad multiples iteraciones 
+
+
+```{r}
+sb_mp  <- densidad_m_pasos(df_cat = sb ,poutlayer = 0.10, var = variables, numit = 10) 
+ct_sd_mp <-  table(sb_mp$Val_Cambio,sb_mp$sospechoso)
+ct_sd_mp
+prop.table(ct_sd_mp, 1)
+prop.table(ct_sd_mp, 2)
+```
+
+
+
